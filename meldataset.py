@@ -18,6 +18,8 @@ import logging
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
+from Utils.kokoro_g2p import KokoroPhonemizer
+
 import pandas as pd
 
 _pad = "$"
@@ -81,7 +83,13 @@ class FilePathDataset(torch.utils.data.Dataset):
 
         _data_list = [l.strip().split('|') for l in data_list]
         self.data_list = [data if len(data) == 3 else (*data, 0) for data in _data_list]
-        self.text_cleaner = TextCleaner()
+        
+        if 'kokoro_config_path' in dataset_config and dataset_config['kokoro_config_path']:
+             print("Using Kokoro Phonemizer")
+             self.text_cleaner = KokoroPhonemizer(dataset_config['kokoro_config_path'])
+        else:
+             self.text_cleaner = TextCleaner()
+             
         self.sr = sr
 
         self.df = pd.DataFrame(self.data_list)
