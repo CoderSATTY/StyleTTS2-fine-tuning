@@ -6,7 +6,7 @@ from chatterbox.tts_turbo import ChatterboxTurboTTS
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 REFERENCE_AUDIO_PATH = "/home/cloud/STT-Livekit-RTC/test_audio_2.wav"
-INPUT_TEXT_FILE = "source_text.txt"
+INPUT_TEXT_FILE = r"Data\source_text.txt"
 OUTPUT_DIR = "Data"
 TARGET_SAMPLE_RATE = 24000
 
@@ -25,9 +25,8 @@ def get_sentences(text_path):
     valid_sentences = []
     for line in lines:
         cleaned = line.strip()
-        if 10 < len(cleaned) < 200:
-            valid_sentences.append(cleaned)
-    
+        valid_sentences.append(cleaned)
+            
     return valid_sentences
 
 def generate_dataset():
@@ -73,4 +72,6 @@ def generate_dataset():
             f.write("\n".join(metadata))
 
 if __name__ == "__main__":
-    generate_dataset()
+    #generate_dataset()
+    valid_sentences = get_sentences(INPUT_TEXT_FILE)
+    print("Valid sentences:",len(valid_sentences))
