@@ -6,9 +6,10 @@ from chatterbox.tts_turbo import ChatterboxTurboTTS
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 REFERENCE_AUDIO_PATH = "/home/cloud/STT-Livekit-RTC/test_audio_2.wav"
-INPUT_TEXT_FILE = r"Data\source_text.txt"
+INPUT_TEXT_FILE = "source_text.txt"
 OUTPUT_DIR = "Data"
 TARGET_SAMPLE_RATE = 24000
+TRAIN_LIST_PATH = os.path.join(OUTPUT_DIR, "train_list.txt")
 
 WAVS_DIR = os.path.join(OUTPUT_DIR, "wavs")
 os.makedirs(WAVS_DIR, exist_ok=True)
@@ -25,20 +26,46 @@ def get_sentences(text_path):
     valid_sentences = []
     for line in lines:
         cleaned = line.strip()
-        valid_sentences.append(cleaned)
-            
+        if 10 < len(cleaned) < 200:
+            valid_sentences.append(cleaned)
+    
     return valid_sentences
+
+def get_completed_indices():
+    if not os.path.exists(TRAIN_LIST_PATH):
+        return set()
+    
+    completed = set()
+    with open(TRAIN_LIST_PATH, "r", encoding="utf-8") as f:
+        for line in f:
+            parts = line.strip().split("|")
+            if parts and len(parts) >= 1:
+                filename = parts[0]
+                # Extract number from "file_0001.wav"
+                try:
+                    # filename is file_XXXX.wav. Split by _ and then .
+                    number_part = filename.split("_")[1].split(".")[0]
+                    completed.add(int(number_part))
+                except:
+                    continue
+    return completed
 
 def generate_dataset():
     sentences = get_sentences(INPUT_TEXT_FILE)
-    print(f"Loaded {len(sentences)} sentences.")
-    metadata = []
+    completed_indices = get_completed_indices()
+    
+    print(f"Total sentences: {len(sentences)}")
+    print(f"Already done:    {len(completed_indices)}")
     
     resampler = None
     if model.sr != TARGET_SAMPLE_RATE:
         resampler = torchaudio.transforms.Resample(orig_freq=model.sr, new_freq=TARGET_SAMPLE_RATE).to(DEVICE)
 
     for i, sentence in enumerate(tqdm(sentences)):
+        # Check if this index (1-based) is already done
+        if (i + 1) in completed_indices:
+            continue
+
         filename = f"file_{i+1:04d}.wav"
         filepath = os.path.join(WAVS_DIR, filename)
         
@@ -62,16 +89,12 @@ def generate_dataset():
                 
             torchaudio.save(filepath, wav_tensor.cpu(), TARGET_SAMPLE_RATE)
             
-            metadata.append(f"{filename}|{sentence}|0")
+            line_content = f"{filename}|{sentence}|0"
+            with open(TRAIN_LIST_PATH, "a", encoding="utf-8") as f:
+                f.write(line_content + "\n")
             
         except Exception:
             continue
 
-    if len(metadata) > 0:
-        with open(os.path.join(OUTPUT_DIR, "train_list.txt"), "w", encoding="utf-8") as f:
-            f.write("\n".join(metadata))
-
 if __name__ == "__main__":
-    #generate_dataset()
-    valid_sentences = get_sentences(INPUT_TEXT_FILE)
-    print("Valid sentences:",len(valid_sentences))
+    generate_dataset()
