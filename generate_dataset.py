@@ -5,13 +5,15 @@ from tqdm import tqdm
 from chatterbox.tts_turbo import ChatterboxTurboTTS
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-REFERENCE_AUDIO_PATH = "/home/cloud/STT-Livekit-RTC/test_audio_2.wav"
-INPUT_TEXT_FILE = "source_text.txt"
-OUTPUT_DIR = "Data"
-TARGET_SAMPLE_RATE = 24000
-TRAIN_LIST_PATH = os.path.join(OUTPUT_DIR, "train_list.txt")
+BASE_DIR = "/home/cloud/StyleTTS2-fine-tuning"
+OUTPUT_DIR = os.path.join(BASE_DIR, "Data")
 
+REFERENCE_AUDIO_PATH = os.path.join(OUTPUT_DIR, "reference_wavs/british_accent_audio.wav")
+INPUT_TEXT_FILE = os.path.join(OUTPUT_DIR, "source_text_final.txt")
+TRAIN_LIST_PATH = os.path.join(OUTPUT_DIR, "train_list_new.txt")
 WAVS_DIR = os.path.join(OUTPUT_DIR, "wavs")
+TARGET_SAMPLE_RATE = 24000
+
 os.makedirs(WAVS_DIR, exist_ok=True)
 
 model = ChatterboxTurboTTS.from_pretrained(device=DEVICE)
@@ -25,8 +27,8 @@ def get_sentences(text_path):
     
     valid_sentences = []
     for line in lines:
-        cleaned = line.strip()
-        if 10 < len(cleaned) < 200:
+        cleaned = line.strip() 
+        if cleaned:  
             valid_sentences.append(cleaned)
     
     return valid_sentences
@@ -41,9 +43,7 @@ def get_completed_indices():
             parts = line.strip().split("|")
             if parts and len(parts) >= 1:
                 filename = parts[0]
-                # Extract number from "file_0001.wav"
                 try:
-                    # filename is file_XXXX.wav. Split by _ and then .
                     number_part = filename.split("_")[1].split(".")[0]
                     completed.add(int(number_part))
                 except:
@@ -62,13 +62,12 @@ def generate_dataset():
         resampler = torchaudio.transforms.Resample(orig_freq=model.sr, new_freq=TARGET_SAMPLE_RATE).to(DEVICE)
 
     for i, sentence in enumerate(tqdm(sentences)):
-        # Check if this index (1-based) is already done
         if (i + 1) in completed_indices:
             continue
 
         filename = f"file_{i+1:04d}.wav"
         filepath = os.path.join(WAVS_DIR, filename)
-        
+        print(f"Generating {filename}...")
         try:
             wav_tensor = model.generate(sentence, audio_prompt_path=REFERENCE_AUDIO_PATH)
             
@@ -81,11 +80,6 @@ def generate_dataset():
             if resampler:
                 wav_tensor = resampler(wav_tensor)
             
-            num_samples = wav_tensor.shape[-1]
-            duration = num_samples / TARGET_SAMPLE_RATE
-            
-            if duration < 1.0 or duration > 12.0:
-                continue
                 
             torchaudio.save(filepath, wav_tensor.cpu(), TARGET_SAMPLE_RATE)
             
