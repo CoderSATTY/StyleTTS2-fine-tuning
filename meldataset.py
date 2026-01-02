@@ -76,6 +76,7 @@ class FilePathDataset(torch.utils.data.Dataset):
                  validation=False,
                  OOD_data="Data/OOD_texts.txt",
                  min_length=50,
+                 kokoro_config_path=None
                  ):
 
         spect_params = SPECT_PARAMS
@@ -84,10 +85,11 @@ class FilePathDataset(torch.utils.data.Dataset):
         _data_list = [l.strip().split('|') for l in data_list]
         self.data_list = [data if len(data) == 3 else (*data, 0) for data in _data_list]
         
-        if 'kokoro_config_path' in dataset_config and dataset_config['kokoro_config_path']:
+        if kokoro_config_path:
              print("Using Kokoro Phonemizer")
-             self.text_cleaner = KokoroPhonemizer(dataset_config['kokoro_config_path'])
+             self.text_cleaner = KokoroPhonemizer(kokoro_config_path)
         else:
+             print("Text Cleaner is used abort!")
              self.text_cleaner = TextCleaner()
              
         self.sr = sr

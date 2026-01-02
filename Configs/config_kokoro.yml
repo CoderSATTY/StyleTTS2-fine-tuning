@@ -6,7 +6,7 @@ device: "cuda"
 epochs: 200
 batch_size: 8 # Adjust based on VRAM
 max_len: 400
-pretrained_model: "models/kokoro-v0_19.pth" # PLACEHOLDER PATH
+pretrained_model: "models/kokoro-v0_19.pth" 
 second_stage_load_pretrained: true
 load_only_params: true
 
@@ -16,7 +16,7 @@ ASR_path: "Utils/ASR/epoch_00080.pth"
 PLBERT_dir: 'Utils/PLBERT/'
 
 data_params:
-  train_data: "Data/train_list.txt"
+  train_data: "Data/train_list_new.txt"
   val_data: "Data/val_list.txt"
   root_path: "Data/wavs"
   OOD_data: "Data/OOD_texts.txt"
