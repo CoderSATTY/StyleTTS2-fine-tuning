@@ -69,26 +69,38 @@ def generate_dataset():
         filepath = os.path.join(WAVS_DIR, filename)
         print(f"Generating {filename}...")
         try:
-            wav_tensor = model.generate(sentence, audio_prompt_path=REFERENCE_AUDIO_PATH)
-            
+            with torch.inference_mode():
+                wav_tensor = model.generate(
+                    sentence,
+                    audio_prompt_path=REFERENCE_AUDIO_PATH
+                )
+
             if wav_tensor.dim() == 1:
                 wav_tensor = wav_tensor.unsqueeze(0)
-            
+
             if wav_tensor.shape[0] > 1:
-                wav_tensor = torch.mean(wav_tensor, dim=0, keepdim=True)
+                wav_tensor = wav_tensor.mean(dim=0, keepdim=True)
+
+            wav_tensor = wav_tensor.cpu()
 
             if resampler:
                 wav_tensor = resampler(wav_tensor)
-            
-                
-            torchaudio.save(filepath, wav_tensor.cpu(), TARGET_SAMPLE_RATE)
-            
-            line_content = f"{filename}|{sentence}|0"
+
+            torchaudio.save(filepath, wav_tensor, TARGET_SAMPLE_RATE)
+
             with open(TRAIN_LIST_PATH, "a", encoding="utf-8") as f:
-                f.write(line_content + "\n")
-            
-        except Exception:
+                f.write(f"{filename}|{sentence}|0\n")
+
+            del wav_tensor
+            torch.cuda.empty_cache()
+
+            if (i + 1) % 50 == 0:
+                torch.cuda.synchronize()
+
+        except Exception as e:
+            print(f"Error at sample {i+1}: {e}")
             continue
+
 
 if __name__ == "__main__":
     generate_dataset()
