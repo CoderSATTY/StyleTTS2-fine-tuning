@@ -14,6 +14,8 @@ import shutil
 import warnings
 import os
 import os.path as osp
+import gc
+import psutil
 warnings.simplefilter('ignore')
 from torch.utils.tensorboard import SummaryWriter
 
@@ -234,7 +236,9 @@ def main(config_path):
     iters = 0
     
     criterion = nn.L1Loss() # F0 loss (regression)
+    torch.backends.cudnn.benchmark = True  # Optimize for GCP GPU
     torch.cuda.empty_cache()
+    gc.collect()  # Initial memory cleanup
     
     stft_loss = MultiResolutionSTFTLoss().to(device)
     
@@ -560,8 +564,15 @@ def main(config_path):
             iters = iters + 1
             
             if (i+1)%log_interval == 0:
-                logger.info ('Epoch [%d/%d], Step [%d/%d], Loss: %.5f, Disc Loss: %.5f, Dur Loss: %.5f, CE Loss: %.5f, Norm Loss: %.5f, F0 Loss: %.5f, LM Loss: %.5f, Gen Loss: %.5f, Sty Loss: %.5f, Diff Loss: %.5f, DiscLM Loss: %.5f, GenLM Loss: %.5f, SLoss: %.5f, S2S Loss: %.5f, Mono Loss: %.5f'
-                    %(epoch+1, epochs, i+1, len(train_list)//batch_size, running_loss / log_interval, d_loss, loss_dur, loss_ce, loss_norm_rec, loss_F0_rec, loss_lm, loss_gen_all, loss_sty, loss_diff, d_loss_slm, loss_gen_lm, s_loss, loss_s2s, loss_mono))
+                # Memory monitoring for GCP
+                gpu_mem_allocated = torch.cuda.max_memory_allocated() / 1024**3
+                gpu_mem_reserved = torch.cuda.max_memory_reserved() / 1024**3
+                cpu_mem = psutil.Process().memory_info().rss / 1024**3
+                
+                logger.info ('Epoch [%d/%d], Step [%d/%d], Loss: %.5f, Disc Loss: %.5f, Dur Loss: %.5f, CE Loss: %.5f, Norm Loss: %.5f, F0 Loss: %.5f, LM Loss: %.5f, Gen Loss: %.5f, Sty Loss: %.5f, Diff Loss: %.5f, DiscLM Loss: %.5f, GenLM Loss: %.5f, SLoss: %.5f, S2S Loss: %.5f, Mono Loss: %.5f | GPU: %.2fGB/%.2fGB, CPU: %.2fGB'
+                    %(epoch+1, epochs, i+1, len(train_list)//batch_size, running_loss / log_interval, d_loss, loss_dur, loss_ce, loss_norm_rec, loss_F0_rec, loss_lm, loss_gen_all, loss_sty, loss_diff, d_loss_slm, loss_gen_lm, s_loss, loss_s2s, loss_mono, gpu_mem_allocated, gpu_mem_reserved, cpu_mem))
+                
+                torch.cuda.reset_peak_memory_stats()
                 
                 writer.add_scalar('train/mel_loss', running_loss / log_interval, iters)
                 writer.add_scalar('train/gen_loss', loss_gen_all, iters)
@@ -579,6 +590,11 @@ def main(config_path):
                 running_loss = 0
                 
                 print('Time elasped:', time.time()-start_time)
+            
+            # Periodic memory cleanup for long training runs on GCP
+            if (i+1) % 100 == 0:
+                torch.cuda.empty_cache()
+                gc.collect()
             
         loss_test = 0
         loss_align = 0
