@@ -264,8 +264,8 @@ def main(config_path):
 
         _ = [model[key].eval() for key in model]
         
-        model.text_aligner.train()
-        model.text_encoder.train()
+        #model.text_aligner.train()
+        #model.text_encoder.train()
         
         model.predictor.train()
         model.bert_encoder.train()
@@ -484,8 +484,8 @@ def main(config_path):
             optimizer.step('style_encoder')
             optimizer.step('decoder')
             
-            optimizer.step('text_encoder')
-            optimizer.step('text_aligner')
+            #optimizer.step('text_encoder')
+            #optimizer.step('text_aligner')
             
             if epoch >= diff_epoch:
                 optimizer.step('diffusion')
