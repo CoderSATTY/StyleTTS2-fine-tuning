@@ -9,7 +9,7 @@ HF_DATASET_ID = "agentlans/high-quality-english-sentences"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 def download_and_save_text():
-    print(f"Downloading first 10,000 lines from {HF_DATASET_ID}...")
+    print(f"Downloading from {HF_DATASET_ID}...")
     ds = load_dataset(HF_DATASET_ID, split="train[:8000]")
 
     text_column = "text"
