@@ -228,6 +228,10 @@ def main(config_path):
         model, optimizer, start_epoch, iters = load_checkpoint(model,  optimizer, config['pretrained_model'],
                                     load_only_params=config.get('load_only_params', True))
         
+        # Kokoro checkpoint doesn't have predictor_encoder - copy from style_encoder for better init
+        print("Copying style_encoder weights to predictor_encoder for stability...")
+        model.predictor_encoder = copy.deepcopy(model.style_encoder)
+        
     n_down = model.text_aligner.n_down
 
     best_loss = float('inf')  # best test loss
@@ -329,6 +333,11 @@ def main(config_path):
             s_dur = torch.stack(ss).squeeze()  # global prosodic styles
             gs = torch.stack(gs).squeeze() # global acoustic styles
             s_trg = torch.cat([gs, s_dur], dim=-1).detach() # ground truth for denoiser
+            
+            # Check for NaN in style encodings early
+            if torch.isnan(s_dur).any() or torch.isnan(gs).any() or torch.isnan(s_trg).any():
+                logger.warning(f'NaN in global style encoding at batch {i+1}, skipping')
+                continue
 
             bert_dur = model.bert(texts, attention_mask=(~text_mask).int())
             d_en = model.bert_encoder(bert_dur).transpose(-1, -2) 
@@ -370,6 +379,11 @@ def main(config_path):
                                                     input_lengths, 
                                                     s2s_attn_mono, 
                                                     text_mask)
+            
+            # Check for NaN in predictor outputs before using them
+            if torch.isnan(p).any() or torch.isnan(d).any():
+                logger.warning(f'NaN in predictor duration/phoneme output at batch {i+1}, skipping')
+                continue
                 
             mel_len_st = int(mel_input_length.min().item() / 2 - 1)
             mel_len = min(int(mel_input_length.min().item() / 2 - 1), max_len // 2)
@@ -401,12 +415,24 @@ def main(config_path):
             gt = torch.stack(gt).detach()
             st = torch.stack(st).detach()
             
+            # Clamp acoustic features to prevent extreme values
+            en = torch.clamp(en, min=-20, max=20)
+            p_en = torch.clamp(p_en, min=-20, max=20)
             
             if gt.size(-1) < 80:
                 continue
             
             s = model.style_encoder(gt.unsqueeze(1))           
             s_dur = model.predictor_encoder(gt.unsqueeze(1))
+            
+            # Check for NaN immediately after style encoder (randomly initialized module)
+            if torch.isnan(s).any() or torch.isnan(s_dur).any():
+                logger.warning(f'NaN detected in style encoder output at iteration {i+1}, skipping batch')
+                continue
+            
+            # Clamp values to prevent extreme inputs that cause NaN
+            s = torch.clamp(s, min=-10, max=10)
+            s_dur = torch.clamp(s_dur, min=-10, max=10)
                 
             with torch.no_grad():
                 F0_real, _, F0 = model.pitch_extractor(gt.unsqueeze(1))
@@ -420,8 +446,44 @@ def main(config_path):
                 wav = y_rec_gt
 
             F0_fake, N_fake = model.predictor.F0Ntrain(p_en, s_dur)
+            
+            # Comprehensive safeguarding for decoder inputs
+            # Check and clamp EVERYTHING before decoder
+            if torch.isnan(F0_fake).any() or torch.isinf(F0_fake).any():
+                logger.warning(f'NaN/Inf in F0 at iteration {i+1}, skipping')
+                continue
+            if torch.isnan(N_fake).any() or torch.isinf(N_fake).any():
+                logger.warning(f'NaN/Inf in N at iteration {i+1}, skipping')
+                continue
+            if torch.isnan(en).any() or torch.isinf(en).any():
+                logger.warning(f'NaN/Inf in en at iteration {i+1}, skipping')
+                continue
+            if torch.isnan(s).any() or torch.isinf(s).any():
+                logger.warning(f'NaN/Inf in s at iteration {i+1}, skipping')
+                continue
+            
+            # Aggressive clamping to safe ranges
+            F0_fake = torch.clamp(F0_fake, min=3.5, max=6.5)
+            N_fake = torch.clamp(N_fake, min=-3.0, max=3.0)
+            en = torch.clamp(en, min=-15, max=15)
+            s = torch.clamp(s, min=-8, max=8)
+            
+            # Replace any remaining NaN/Inf with zeros as last resort
+            F0_fake = torch.where(torch.isnan(F0_fake) | torch.isinf(F0_fake), torch.tensor(5.0, device=F0_fake.device), F0_fake)
+            N_fake = torch.where(torch.isnan(N_fake) | torch.isinf(N_fake), torch.tensor(0.0, device=N_fake.device), N_fake)
+            en = torch.where(torch.isnan(en) | torch.isinf(en), torch.tensor(0.0, device=en.device), en)
+            s = torch.where(torch.isnan(s) | torch.isinf(s), torch.tensor(0.0, device=s.device), s)
 
-            y_rec = model.decoder(en, F0_fake, N_fake, s)
+            try:
+                y_rec = model.decoder(en, F0_fake, N_fake, s)
+            except RuntimeError as e:
+                logger.warning(f'Decoder error at iteration {i+1}: {e}, skipping')
+                continue
+            
+            # Check decoder output
+            if torch.isnan(y_rec).any() or torch.isinf(y_rec).any():
+                logger.warning(f'NaN/Inf in decoder output at iteration {i+1}, skipping')
+                continue
 
             loss_F0_rec =  (F.smooth_l1_loss(F0_real, F0_fake)) / 10
             loss_norm_rec = F.smooth_l1_loss(N_real, N_fake)
@@ -477,9 +539,22 @@ def main(config_path):
             
             running_loss += loss_mel.item()
             accelerator.backward(g_loss)
+            
+            # Check for NaN before gradient clipping
             if torch.isnan(g_loss):
-                from IPython.core.debugger import set_trace
-                set_trace()
+                logger.error('NaN loss detected! Stopping training.')
+                logger.error(f'Loss values:')
+                logger.error(f'  mel: {loss_mel.item()}, F0: {loss_F0_rec.item()}, dur: {loss_dur.item()}, ce: {loss_ce.item()}')
+                logger.error(f'  norm: {loss_norm_rec.item()}, gen: {loss_gen_all.item()}, lm: {loss_lm.item()}')
+                logger.error(f'  sty: {loss_sty if isinstance(loss_sty, int) else loss_sty.item()}')
+                logger.error(f'  diff: {loss_diff if isinstance(loss_diff, int) else loss_diff.item()}')
+                logger.error(f'  mono: {loss_mono.item()}, s2s: {loss_s2s.item()}')
+                raise ValueError('Training stopped due to NaN loss. Check your learning rates and data quality.')
+            
+            # Gradient clipping to prevent exploding gradients from randomly initialized modules
+            torch.nn.utils.clip_grad_norm_(model.style_encoder.parameters(), max_norm=1.0)
+            torch.nn.utils.clip_grad_norm_(model.predictor_encoder.parameters(), max_norm=1.0)
+            torch.nn.utils.clip_grad_norm_(model.decoder.parameters(), max_norm=1.0)
 
             optimizer.step('bert_encoder')
             optimizer.step('bert')

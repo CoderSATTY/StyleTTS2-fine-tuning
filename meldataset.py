@@ -76,14 +76,26 @@ class FilePathDataset(torch.utils.data.Dataset):
                  validation=False,
                  OOD_data="Data/OOD_texts.txt",
                  min_length=50,
-                 kokoro_config_path=None
+                 kokoro_config_path="Configs/config.json"
                  ):
 
         spect_params = SPECT_PARAMS
         mel_params = MEL_PARAMS
 
-        _data_list = [l.strip().split('|') for l in data_list]
-        self.data_list = [data if len(data) == 3 else (*data, 0) for data in _data_list]
+        parsed_data = []
+        for l in data_list:
+            parts = l.strip().split('|')
+            if len(parts) >= 3:
+                # Robust parsing: Path | Text (may contain |) | SpeakerID
+                path = parts[0]
+                speaker_id = parts[-1]
+                text = '|'.join(parts[1:-1])
+                parsed_data.append([path, text, speaker_id])
+            elif len(parts) == 2:
+                # Path | Text -> Default Speaker 0
+                parsed_data.append([parts[0], parts[1], '0'])
+        
+        self.data_list = parsed_data
         
         if kokoro_config_path:
              print("Using Kokoro Phonemizer")
@@ -146,7 +158,7 @@ class FilePathDataset(torch.utils.data.Dataset):
         return speaker_id, acoustic_feature, text_tensor, ref_text, ref_mel_tensor, ref_label, path, wave
 
     def _load_tensor(self, data):
-        wave_path, text, speaker_id = data
+        wave_path, text, speaker_id = data[:3]
         speaker_id = int(speaker_id)
         wave, sr = sf.read(osp.join(self.root_path, wave_path))
         if wave.shape[-1] == 2:
@@ -158,6 +170,10 @@ class FilePathDataset(torch.utils.data.Dataset):
         wave = np.concatenate([np.zeros([5000]), wave, np.zeros([5000])], axis=0)
         
         text = self.text_cleaner(text)
+        
+        # Truncate to avoid BERT 512 limit
+        if len(text) > 500:
+            text = text[:500]
         
         text.insert(0, 0)
         text.append(0)

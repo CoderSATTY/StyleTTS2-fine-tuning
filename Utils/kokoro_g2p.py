@@ -6,7 +6,7 @@ import torch
 class KokoroPhonemizer:
     def __init__(self, config_path="Configs/config.json", style="us"):
         if not os.path.exists(config_path):
-             pass
+            raise FileNotFoundError(f"Kokoro config not found: {config_path}")
         
         with open(config_path, 'r', encoding='utf-8') as f:
             self.config = json.load(f)

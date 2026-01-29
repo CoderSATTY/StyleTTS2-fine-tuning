@@ -76,7 +76,6 @@ class DownSample(nn.Module):
         else:
             raise RuntimeError('Got unexpected donwsampletype %s, expected is [none, timepreserve, half]' % self.layer_type)
 
-
 class UpSample(nn.Module):
     def __init__(self, layer_type):
         super().__init__()
@@ -91,7 +90,6 @@ class UpSample(nn.Module):
             return F.interpolate(x, scale_factor=2, mode='nearest')
         else:
             raise RuntimeError('Got unexpected upsampletype %s, expected is [none, timepreserve, half]' % self.layer_type)
-
 
 class ResBlk(nn.Module):
     def __init__(self, dim_in, dim_out, actv=nn.LeakyReLU(0.2),
@@ -344,8 +342,6 @@ class TextEncoder(nn.Module):
         mask = torch.gt(mask+1, lengths.unsqueeze(1))
         return mask
 
-
-
 class AdaIN1d(nn.Module):
     def __init__(self, style_dim, num_features):
         super().__init__()
@@ -585,7 +581,7 @@ def load_F0_models(path):
     # load F0 model
 
     F0_model = JDCNet(num_class=1, seq_len=192)
-    params = torch.load(path, map_location='cpu')['net']
+    params = torch.load(path, map_location='cpu', weights_only=False)['net']
     F0_model.load_state_dict(params)
     _ = F0_model.train()
     
@@ -601,7 +597,7 @@ def load_ASR_models(ASR_MODEL_PATH, ASR_MODEL_CONFIG):
 
     def _load_model(model_config, model_path):
         model = ASRCNN(**model_config)
-        params = torch.load(model_path, map_location='cpu')['model']
+        params = torch.load(model_path, map_location='cpu', weights_only=False)['model']
         model.load_state_dict(params)
         return model
 
@@ -694,8 +690,17 @@ def build_model(args, text_aligner, pitch_extractor, bert):
     return nets
 
 def load_checkpoint(model, optimizer, path, load_only_params=True, ignore_modules=[]):
-    state = torch.load(path, map_location='cpu')
-    params = state['net']
+    state = torch.load(path, map_location='cpu', weights_only=False)
+    
+    # Handle both checkpoint formats:
+    # 1. Training checkpoint: {'net': {...}, 'epoch': 0, 'optimizer': {...}}
+    # 2. Kokoro pretrained: {'bert': {...}, 'decoder': {...}, ...}
+    if 'net' in state:
+        params = state['net']
+    else:
+        # Direct model state dicts (Kokoro format)
+        params = state
+    
     for key in model:
         if key in params and key not in ignore_modules:
             print('%s loaded' % key)
@@ -703,9 +708,10 @@ def load_checkpoint(model, optimizer, path, load_only_params=True, ignore_module
     _ = [model[key].eval() for key in model]
     
     if not load_only_params:
-        epoch = state["epoch"]
-        iters = state["iters"]
-        optimizer.load_state_dict(state["optimizer"])
+        epoch = state.get("epoch", 0)
+        iters = state.get("iters", 0)
+        if "optimizer" in state and optimizer is not None:
+            optimizer.load_state_dict(state["optimizer"])
     else:
         epoch = 0
         iters = 0

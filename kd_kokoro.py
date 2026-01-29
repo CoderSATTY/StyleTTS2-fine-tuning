@@ -12,6 +12,8 @@ import librosa
 import click
 import shutil
 import warnings
+import os
+import os.path as osp
 warnings.simplefilter('ignore')
 from torch.utils.tensorboard import SummaryWriter
 
@@ -52,7 +54,7 @@ logger.addHandler(handler)
 
 
 @click.command()
-@click.option('-p', '--config_path', default='Configs/config_ft.yml', type=str)
+@click.option('-p', '--config_path', default='Configs/config_kokoro.yml', type=str)
 def main(config_path):
     config = yaml.safe_load(open(config_path))
     
@@ -70,10 +72,9 @@ def main(config_path):
     
     batch_size = config.get('batch_size', 10)
 
-    epochs = config.get('epochs', 200)
+    epochs = config.get('epochs', 20)
     save_freq = config.get('save_freq', 2)
     log_interval = config.get('log_interval', 10)
-    saving_epoch = config.get('save_freq', 2)
 
     data_params = config.get('data_params', None)
     sr = config['preprocess_params'].get('sr', 24000)
@@ -94,13 +95,15 @@ def main(config_path):
     train_list, val_list = get_data_path_list(train_path, val_path)
     device = accelerator.device
 
+    dataset_config = {'kokoro_config_path': config.get('kokoro_config_path', None)}
+
     train_dataloader = build_dataloader(train_list,
                                         root_path,
                                         OOD_data=OOD_data,
                                         min_length=min_length,
                                         batch_size=batch_size,
                                         num_workers=2,
-                                        dataset_config = {'kokoro_config_path': config.get('kokoro_config_path', None)},
+                                        dataset_config=dataset_config,
                                         device=device)
     
     
@@ -574,7 +577,8 @@ def main(config_path):
         loss_align = 0
         loss_f = 0
         _ = [model[key].eval() for key in model]
-
+        
+        # Validation accuracy without distilling
         with torch.no_grad():
             iters_test = 0
             for batch_idx, batch in enumerate(val_dataloader):
